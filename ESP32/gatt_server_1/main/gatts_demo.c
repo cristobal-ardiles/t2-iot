@@ -50,14 +50,15 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 #define GATTS_DESCR_UUID_TEST_B     0x2222
 #define GATTS_NUM_HANDLE_TEST_B     4
 
-#define TEST_DEVICE_NAME            "ESP_SERVER"
+#define TEST_DEVICE_NAME            "ESP_GATTS_DEMO"
 #define TEST_MANUFACTURER_DATA_LEN  17
 
 #define GATTS_DEMO_CHAR_VAL_LEN_MAX 0x40
 
 #define PREPARE_BUF_MAX_SIZE 1024
 
-static uint8_t char1_str[] = {0x11,0x22,0x33};
+static uint8_t char1_str[] = {0x22,0x33,0x44};
+static uint8_t char2_str[] = "HolaMundo!";
 static esp_gatt_char_prop_t a_property = 0;
 static esp_gatt_char_prop_t b_property = 0;
 
@@ -67,6 +68,14 @@ static esp_attr_value_t gatts_demo_char1_val =
     .attr_len     = sizeof(char1_str),
     .attr_value   = char1_str,
 };
+
+static esp_attr_value_t gatts_demo_char2_val =
+{
+    .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
+    .attr_len     = sizeof(char2_str),
+    .attr_value   = char2_str,
+};
+
 
 static uint8_t adv_config_done = 0;
 #define adv_config_flag      (1 << 0)
@@ -238,6 +247,14 @@ static void gap_event_handler(esp_gap_ble_cb_event_t event, esp_ble_gap_cb_param
     }
 }
 
+void save_value(int16_t attr_handle, uint16_t length, const uint8_t *value){
+    ESP_LOGI(GATTS_TAG, "Trying to change char value");
+    esp_err_t err = esp_ble_gatts_set_attr_value(attr_handle, length, value);
+    if(err != ESP_OK){
+        ESP_LOGE(GATTS_TAG,"Failed to write characteristic"); 
+    }
+}
+
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
     esp_gatt_status_t status = ESP_GATT_OK;
     if (param->write.need_rsp){
@@ -275,16 +292,19 @@ void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare
                    param->write.value,
                    param->write.len);
             prepare_write_env->prepare_len += param->write.len;
-
         }else{
             esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, status, NULL);
+            save_value(param->write.handle, param->write.len, param->write.value);
         }
+    } else if (!param->write.is_prep){
+         save_value(param->write.handle, param->write.len, param->write.value);
     }
 }
 
 void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
     if (param->exec_write.exec_write_flag == ESP_GATT_PREP_WRITE_EXEC){
         esp_log_buffer_hex(GATTS_TAG, prepare_write_env->prepare_buf, prepare_write_env->prepare_len);
+        save_value(param->write.handle, prepare_write_env->prepare_len, prepare_write_env->prepare_buf);
     }else{
         ESP_LOGI(GATTS_TAG,"ESP_GATT_PREP_WRITE_CANCEL");
     }
@@ -293,6 +313,25 @@ void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble
         prepare_write_env->prepare_buf = NULL;
     }
     prepare_write_env->prepare_len = 0;
+}
+
+void get_config(uint8_t *transport_layer, const uint8_t *protocol){
+    uint16_t config_handle = gl_profile_tab[PROFILE_A_APP_ID].char_handle;
+    uint16_t char_len; 
+    uint8_t *char_value; 
+    esp_gatt_status_t status = esp_ble_gatts_get_attr_value(config_handle, &char_len, &char_value);
+    if (status!=ESP_GATT_OK){
+        ESP_LOGE(GATT_TAG,"Could not retreive config");
+    }
+
+    *transport_layer = char_value[0];
+    *protocol = char_value[1];
+    
+    return 
+}
+
+void get_data(uint8_t protocol){
+
 }
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
@@ -341,11 +380,16 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         esp_gatt_rsp_t rsp;
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = 4;
-        rsp.attr_value.value[0] = 0xde;
-        rsp.attr_value.value[1] = 0xed;
-        rsp.attr_value.value[2] = 0xbe;
-        rsp.attr_value.value[3] = 0xef;
+        uint16_t char_len;
+        const uint8_t *char_val; 
+        esp_gatt_status_t status = esp_ble_gatts_get_attr_value(param->read.handle,&char_len,&char_val);
+        if (status){
+            ESP_LOGE(GATTS_TAG, "Failed to load attribute %d", param->read.handle);
+        }
+        rsp.attr_value.len = char_len;
+        for (int i=0; i<char_len; i++){
+            rsp.attr_value.value[i] = char_val[i]; 
+        }
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
         break;
@@ -392,6 +436,17 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
             }
         }
         example_write_event_env(gatts_if, &a_prepare_write_env, param);
+
+        // Cargar datos a la característica
+        uint8_t transport_layer;
+        uint8_t protocol;
+        get_config(&transport_layer, &protocol); 
+        
+        uint8_t* data = get_data(protocol); 
+        
+        if (protocol == 30){
+
+        }
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
@@ -513,11 +568,16 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         esp_gatt_rsp_t rsp;
         memset(&rsp, 0, sizeof(esp_gatt_rsp_t));
         rsp.attr_value.handle = param->read.handle;
-        rsp.attr_value.len = 4;
-        rsp.attr_value.value[0] = 0xde;
-        rsp.attr_value.value[1] = 0xed;
-        rsp.attr_value.value[2] = 0xbe;
-        rsp.attr_value.value[3] = 0xef;
+        uint16_t char_len;
+        const uint8_t *char_val; 
+        esp_gatt_status_t status = esp_ble_gatts_get_attr_value(param->read.handle,&char_len,&char_val);
+        if (status){
+            ESP_LOGE(GATTS_TAG, "Failed to load attribute %d", param->read.handle);
+        }
+        rsp.attr_value.len = char_len;
+        for (int i=0; i<char_len; i++){
+            rsp.attr_value.value[i] = char_val[i]; 
+        }
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
         break;
@@ -586,7 +646,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         esp_err_t add_char_ret =esp_ble_gatts_add_char( gl_profile_tab[PROFILE_B_APP_ID].service_handle, &gl_profile_tab[PROFILE_B_APP_ID].char_uuid,
                                                         ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                                         b_property,
-                                                        NULL, NULL);
+                                                        &gatts_demo_char2_val, NULL);
         if (add_char_ret){
             ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
         }
@@ -674,7 +734,7 @@ void app_main(void)
 {
     esp_err_t ret;
 
-    // Initialize Non Volatile Storage.
+    // Initialize NVS.
     ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
         ESP_ERROR_CHECK(nvs_flash_erase());
@@ -684,21 +744,18 @@ void app_main(void)
 
     ESP_ERROR_CHECK(esp_bt_controller_mem_release(ESP_BT_MODE_CLASSIC_BT));
 
-    // Create BT controller 
     esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
     ret = esp_bt_controller_init(&bt_cfg);
     if (ret) {
         ESP_LOGE(GATTS_TAG, "%s initialize controller failed: %s\n", __func__, esp_err_to_name(ret));
         return;
     }
-    // BLE Mode
+
     ret = esp_bt_controller_enable(ESP_BT_MODE_BLE);
     if (ret) {
         ESP_LOGE(GATTS_TAG, "%s enable controller failed: %s\n", __func__, esp_err_to_name(ret));
         return;
     }
-
-    // Bluedroid stack
     ret = esp_bluedroid_init();
     if (ret) {
         ESP_LOGE(GATTS_TAG, "%s init bluetooth failed: %s\n", __func__, esp_err_to_name(ret));
@@ -710,7 +767,6 @@ void app_main(void)
         return;
     }
 
-    // Set handlers for GATT and GAP
     ret = esp_ble_gatts_register_callback(gatts_event_handler);
     if (ret){
         ESP_LOGE(GATTS_TAG, "gatts register error, error code = %x", ret);
