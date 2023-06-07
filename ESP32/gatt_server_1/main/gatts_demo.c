@@ -34,6 +34,9 @@
 
 #include "sdkconfig.h"
 
+#include "../../packets.h"
+#include "../../sensors.h"
+
 #define GATTS_TAG "GATTS_DEMO"
 
 ///Declare the static function
@@ -315,23 +318,23 @@ void example_exec_write_event_env(prepare_type_env_t *prepare_write_env, esp_ble
     prepare_write_env->prepare_len = 0;
 }
 
-void get_config(uint8_t *transport_layer, const uint8_t *protocol){
+void get_config(uint8_t *transport_layer, uint8_t *protocol){
     uint16_t config_handle = gl_profile_tab[PROFILE_A_APP_ID].char_handle;
     uint16_t char_len; 
-    uint8_t *char_value; 
+    const uint8_t *char_value; 
     esp_gatt_status_t status = esp_ble_gatts_get_attr_value(config_handle, &char_len, &char_value);
     if (status!=ESP_GATT_OK){
-        ESP_LOGE(GATT_TAG,"Could not retreive config");
+        ESP_LOGE(GATTS_TAG,"Could not retreive config");
     }
 
     *transport_layer = char_value[0];
     *protocol = char_value[1];
     
-    return 
+    return;
 }
 
-void get_data(uint8_t protocol){
-
+void get_data(uint8_t protocol, uint8_t **dest){
+    return;
 }
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
@@ -399,6 +402,8 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         if (!param->write.is_prep){
             ESP_LOGI(GATTS_TAG, "GATT_WRITE_EVT, value len %d, value :", param->write.len);
             esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
+            
+            ESP_LOGI(GATTS_TAG, "Value[0] %d, value[1] %d", param->write.value[0], param->write.value[1]);
             if (gl_profile_tab[PROFILE_A_APP_ID].descr_handle == param->write.handle && param->write.len == 2){
                 uint16_t descr_value = param->write.value[1]<<8 | param->write.value[0];
                 if (descr_value == 0x0001){
@@ -433,17 +438,21 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                     esp_log_buffer_hex(GATTS_TAG, param->write.value, param->write.len);
                 }
 
+            } else {
+                example_write_event_env(gatts_if, &a_prepare_write_env, param);
             }
-        }
-        example_write_event_env(gatts_if, &a_prepare_write_env, param);
-
+        } else {
+            example_write_event_env(gatts_if, &a_prepare_write_env, param);
+        } 
+    
         // Cargar datos a la característica
         uint8_t transport_layer;
         uint8_t protocol;
         get_config(&transport_layer, &protocol); 
         
-        uint8_t* data = get_data(protocol); 
-        
+        uint8_t* data;
+        get_data(protocol, &data); 
+    
         if (protocol == 30){
 
         }
@@ -620,9 +629,12 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                     ESP_LOGE(GATTS_TAG, "unknown value");
                 }
 
+            } else {
+                example_write_event_env(gatts_if, &b_prepare_write_env, param);
             }
+        } else {
+                example_write_event_env(gatts_if, &a_prepare_write_env, param);
         }
-        example_write_event_env(gatts_if, &b_prepare_write_env, param);
         break;
     }
     case ESP_GATTS_EXEC_WRITE_EVT:
@@ -642,7 +654,7 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         gl_profile_tab[PROFILE_B_APP_ID].char_uuid.uuid.uuid16 = GATTS_CHAR_UUID_TEST_B;
 
         esp_ble_gatts_start_service(gl_profile_tab[PROFILE_B_APP_ID].service_handle);
-        b_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY;
+        b_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_INDICATE;
         esp_err_t add_char_ret =esp_ble_gatts_add_char( gl_profile_tab[PROFILE_B_APP_ID].service_handle, &gl_profile_tab[PROFILE_B_APP_ID].char_uuid,
                                                         ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                                         b_property,
@@ -791,6 +803,6 @@ void app_main(void)
     if (local_mtu_ret){
         ESP_LOGE(GATTS_TAG, "set local  MTU failed, error code = %x", local_mtu_ret);
     }
-
+  
     return;
 }
