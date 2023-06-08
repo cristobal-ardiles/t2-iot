@@ -71,6 +71,7 @@ cur.execute(create_logs)
 cur.execute(create_config)
 cur.execute(create_loss)
 cur.execute(insert_config)
+cur.commit()
 conn.close()
 
 # inicializa la BDD
