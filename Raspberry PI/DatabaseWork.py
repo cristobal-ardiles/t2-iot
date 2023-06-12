@@ -59,3 +59,11 @@ def getConfig():
         cur = con.cursor()
         protocol, transport = cur.execute('''select ID_protocol, TransportLayer from Config''').fetchone()
         return protocol, transport
+    
+def save_config(status, protocol):
+    with sql.connect("DB.sqlite") as con:
+        cur = con.cursor()
+        cur.execute(f'''UPDATE Config SET ID_protocol = {protocol}, TransportLayer = {status} 
+                    WHERE ID_DEVICE = 12612''')
+        con.commit()
+    

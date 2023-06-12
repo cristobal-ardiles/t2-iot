@@ -18,6 +18,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -25,17 +26,16 @@
 #include "esp_log.h"
 #include "nvs_flash.h"
 #include "esp_bt.h"
-
 #include "esp_gap_ble_api.h"
 #include "esp_gatts_api.h"
 #include "esp_bt_defs.h"
 #include "esp_bt_main.h"
 #include "esp_gatt_common_api.h"
+#include "esp_random.h"
+#include "esp_mac.h"
+#include <sys/time.h>
 
 #include "sdkconfig.h"
-
-#include "../../packets.h"
-#include "../../sensors.h"
 
 #define GATTS_TAG "GATTS_DEMO"
 
@@ -60,8 +60,136 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
 
 #define PREPARE_BUF_MAX_SIZE 1024
 
-static uint8_t char1_str[] = {0x22,0x33,0x44};
-static uint8_t char2_str[] = "HolaMundo!";
+void header(char* dest, char protocol, char transport_layer, short data_length){
+    char* ID = "D1";
+    memcpy((void*) &(dest[0]), (void*) ID, 2);
+	uint8_t* MAC_addrs = malloc(6);
+	esp_efuse_mac_get_default(MAC_addrs);
+	memcpy((void*) &(dest[2]), (void*) MAC_addrs, 6);
+    dest[8]= transport_layer;
+	dest[9]= protocol;
+	memcpy((void*) &(dest[10]), (void*) &data_length, 2);
+	free(MAC_addrs);
+}
+
+typedef struct { 
+    char temp;
+    char hum;
+    float pres;
+    float co2; 
+} THCP;
+
+typedef struct { 
+    float rms;
+    float ampx;
+    float frecx;
+    float ampy;
+    float frecy;
+    float ampz;
+    float frecz;
+} ACC_KPI; 
+
+typedef struct {
+    char batt;
+    long timestamp; 
+} BATT_TIME; 
+
+typedef struct {
+    float* acc_x;
+    float* acc_y;
+    float* acc_z;
+} ACC;
+
+// THPC constants
+char MIN_TEMP = 5;
+char MAX_TEMP = 30;
+char MIN_HUM = 30;
+char MAX_HUM = 80;
+float MIN_PRES = 1000;
+float MAX_PRES = 1200;
+float MIN_CO2 = 30;
+float MAX_CO2 = 200;
+
+//Accelerometer KPI range
+float MIN_AMP_X = 0.0059;
+float MAX_AMP_X = 0.12;
+float MIN_FREC_X = 29;
+float MAX_FREC_X = 31;
+
+float MIN_AMP_Y = 0.0041;
+float MAX_AMP_Y = 0.11;
+float MIN_FREC_Y = 59;
+float MAX_FREC_Y = 61;
+
+float MIN_AMP_Z = 0.008;
+float MAX_AMP_Z = 0.15;
+float MIN_FREC_Z = 89;
+float MAX_FREC_Z = 91;
+
+float get_rand(float min_val, float max_val){
+    return min_val + (max_val-min_val) * (float) esp_random() / (float) UINT32_MAX;
+}
+
+void read_thcp_sensor(THCP* thcp){
+    struct timeval tm; 
+    gettimeofday(&tm,NULL);
+
+    // Generating structure to store values
+
+    // Temperature vals
+    thcp->temp = (char) get_rand(MIN_TEMP, MAX_TEMP);
+
+    // Humidity vals
+    thcp->hum = (char) get_rand(MIN_HUM,MAX_HUM);
+
+    // Pressure vals
+    thcp->pres = get_rand(MIN_PRES, MAX_PRES);
+
+    // CO2 vals
+    thcp->co2 = get_rand(MIN_CO2, MAX_CO2);  
+}
+
+void read_acc_kpi_sensor(ACC_KPI* kpi){
+    //Setting random seed
+    srand(time(NULL));
+    
+    float ampx = get_rand(MIN_AMP_X, MAX_AMP_X);
+    kpi->ampx = ampx;
+    kpi->frecx = get_rand(MIN_FREC_X, MAX_FREC_X);
+
+    float ampy = get_rand(MIN_AMP_Y, MAX_AMP_Y);
+    kpi->ampy = ampy;
+    kpi->frecy = get_rand(MIN_FREC_Y, MAX_FREC_Y);
+
+    float ampz = get_rand(MIN_AMP_Z, MAX_AMP_Z);
+    kpi->ampz = ampz;
+    kpi->frecz = get_rand(MIN_FREC_Z, MAX_FREC_Z);
+
+    kpi->rms = sqrt(ampx*ampx + ampy*ampy + ampz*ampz);
+}
+
+void read_batt_time(BATT_TIME* dest){
+    struct timeval tm; 
+    gettimeofday(&tm, NULL);
+    dest->batt = (char) get_rand(0,100);
+    dest->timestamp = (long) tm.tv_sec + (long) get_rand(1,10000);
+}
+
+void read_accelerometer(ACC* acc){
+    int samples = 2000;
+    acc->acc_x = malloc(samples*sizeof(float));
+    acc->acc_y = malloc(samples*sizeof(float));
+    acc->acc_z = malloc(samples*sizeof(float));   
+    for(int i=0; i<samples; i++){
+        acc->acc_x[i] = 2*sin(2*M_PI*0.001*i);
+        acc->acc_y[i] = 3*cos(2*M_PI*0.001*i);
+        acc->acc_z[i] = 10*sin(2*M_PI*0.001*i);
+    }
+}
+
+
+static uint8_t char1_str[] = {0x0a, 0x0};
+// static uint8_t char2_str[] = "HolaMundo!";
 static esp_gatt_char_prop_t a_property = 0;
 static esp_gatt_char_prop_t b_property = 0;
 
@@ -72,12 +200,12 @@ static esp_attr_value_t gatts_demo_char1_val =
     .attr_value   = char1_str,
 };
 
-static esp_attr_value_t gatts_demo_char2_val =
-{
-    .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
-    .attr_len     = sizeof(char2_str),
-    .attr_value   = char2_str,
-};
+// static esp_attr_value_t gatts_demo_char2_val =
+// {
+//     .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
+//     .attr_len     = sizeof(char2_str),
+//     .attr_value   = char2_str,
+// };
 
 
 static uint8_t adv_config_done = 0;
@@ -259,6 +387,7 @@ void save_value(int16_t attr_handle, uint16_t length, const uint8_t *value){
 }
 
 void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare_write_env, esp_ble_gatts_cb_param_t *param){
+    
     esp_gatt_status_t status = ESP_GATT_OK;
     if (param->write.need_rsp){
         if (param->write.is_prep){
@@ -300,7 +429,7 @@ void example_write_event_env(esp_gatt_if_t gatts_if, prepare_type_env_t *prepare
             save_value(param->write.handle, param->write.len, param->write.value);
         }
     } else if (!param->write.is_prep){
-         save_value(param->write.handle, param->write.len, param->write.value);
+        save_value(param->write.handle, param->write.len, param->write.value);
     }
 }
 
@@ -333,9 +462,55 @@ void get_config(uint8_t *transport_layer, uint8_t *protocol){
     return;
 }
 
-void get_data(uint8_t protocol, uint8_t **dest){
+short get_payload_size(uint8_t protocol){
+    short payload_size; 
+    switch(protocol){
+            case 0:
+                payload_size = 18;
+                break;
+            case 1:
+                payload_size = 28;
+                break;
+            case 2:
+                payload_size = 32;
+                break;
+            case 3:
+                payload_size = 56;
+                break;
+            default:
+                payload_size = -1;
+                break;
+    }
+    return payload_size; 
+}
+
+void get_data(uint8_t protocol, short payload_size, uint8_t status, char *dest){
+
+    // Header del paquete
+    header(dest, protocol, status, payload_size);
+    // BATT_TIME
+    dest[12] = 1;
+    BATT_TIME batt_time; 
+    read_batt_time(&batt_time);
+    memcpy(&dest[13],&batt_time,5);
+    if (protocol > 0){
+        THCP thcp;
+        read_thcp_sensor(&thcp);
+        memcpy(&dest[18],&thcp,10);
+    }
+    if (protocol > 1){
+        ACC_KPI kpi; 
+        read_acc_kpi_sensor(&kpi);
+        if (protocol == 2){
+            memcpy(&dest[28], &kpi, 4);
+        } else if (protocol == 3){
+            memcpy(&dest[28], &kpi, 28);
+        }
+    }
     return;
 }
+
+
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
     switch (event) {
@@ -395,6 +570,7 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         }
         esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
+        ESP_LOGI(GATTS_TAG, "Data sent");
         break;
     }
     case ESP_GATTS_WRITE_EVT: {
@@ -415,8 +591,10 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                             notify_data[i] = i%0xff;
                         }
                         //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle,
-                                                sizeof(notify_data), notify_data, false);
+                        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
+                        
+                        // esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle,
+                        //                         sizeof(notify_data), notify_data, false);
                     }
                 }else if (descr_value == 0x0002){
                     if (a_property & ESP_GATT_CHAR_PROP_BIT_INDICATE){
@@ -427,8 +605,10 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                             indicate_data[i] = i%0xff;
                         }
                         //the size of indicate_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle,
-                                                sizeof(indicate_data), indicate_data, true);
+                        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL);
+                        
+                        // esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_A_APP_ID].char_handle,
+                                                // sizeof(indicate_data), indicate_data, true);
                     }
                 }
                 else if (descr_value == 0x0000){
@@ -446,15 +626,36 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         } 
     
         // Cargar datos a la característica
-        uint8_t transport_layer;
+        uint8_t status;
         uint8_t protocol;
-        get_config(&transport_layer, &protocol); 
-        
-        uint8_t* data;
-        get_data(protocol, &data); 
-    
-        if (protocol == 30){
 
+        status = param->write.value[0];
+        protocol = param->write.value[1];
+
+        // get_config(&status, &protocol); 
+
+        ESP_LOGI(GATTS_TAG, "Status: %d, Protocol: %d", status, protocol);
+        
+        short payload_size = get_payload_size(protocol);
+
+        char* data = malloc(payload_size);
+        get_data(protocol, payload_size, status, data); 
+        save_value(gl_profile_tab[PROFILE_B_APP_ID].char_handle, 
+            payload_size,
+            (const uint8_t*) data);
+        free(data);
+        if (status == 30){
+            esp_ble_gatts_send_indicate(
+                gl_profile_tab[PROFILE_B_APP_ID].gatts_if, param->write.conn_id, 
+                gl_profile_tab[PROFILE_B_APP_ID].char_handle, 0, NULL, false  
+            );
+            ESP_LOGI(GATTS_TAG,"Notification sent");
+        } else if (status == 31){
+            esp_ble_gatts_send_indicate(
+                gl_profile_tab[PROFILE_B_APP_ID].gatts_if, param->write.conn_id, 
+                gl_profile_tab[PROFILE_B_APP_ID].char_handle, 0, NULL, true  
+            );
+            ESP_LOGI(GATTS_TAG,"Indication sent");
         }
         break;
     }
@@ -583,12 +784,28 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         if (status){
             ESP_LOGE(GATTS_TAG, "Failed to load attribute %d", param->read.handle);
         }
-        rsp.attr_value.len = char_len;
-        for (int i=0; i<char_len; i++){
-            rsp.attr_value.value[i] = char_val[i]; 
+        ESP_LOGI(GATTS_TAG, "Data retreived, sending");
+        uint16_t offset = param->read.offset;
+        int rsp_len; 
+        if (offset+19 < char_len){
+            rsp_len = 19;
+        } else {
+            rsp_len = char_len - offset; 
         }
-        esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
+        rsp.attr_value.len = rsp_len;
+        for (int i=0; i<rsp_len; i++){
+            rsp.attr_value.value[i] = char_val[i+offset]; 
+        }
+        rsp.attr_value.offset = param->read.offset;
+        rsp.attr_value.auth_req = ESP_GATT_AUTH_REQ_NONE;
+        ESP_LOGI(GATTS_TAG, "Sending data");
+        esp_log_buffer_hex(GATTS_TAG, rsp.attr_value.value, rsp.attr_value.len);
+        esp_err_t err = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
+        while(err != ESP_OK){
+            err = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
+                                    ESP_GATT_OK, &rsp);
+        }
         break;
     }
     case ESP_GATTS_WRITE_EVT: {
@@ -606,9 +823,12 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         {
                             notify_data[i] = i%0xff;
                         }
+
+                        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL); 
+
                         //the size of notify_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_B_APP_ID].char_handle,
-                                                sizeof(notify_data), notify_data, false);
+                        // esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_B_APP_ID].char_handle,
+                        //                         sizeof(notify_data), notify_data, false);
                     }
                 }else if (descr_value == 0x0002){
                     if (b_property & ESP_GATT_CHAR_PROP_BIT_INDICATE){
@@ -618,9 +838,12 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
                         {
                             indicate_data[i] = i%0xff;
                         }
+
+                        esp_ble_gatts_send_response(gatts_if, param->write.conn_id, param->write.trans_id, ESP_GATT_OK, NULL); 
+
                         //the size of indicate_data[] need less than MTU size
-                        esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_B_APP_ID].char_handle,
-                                                sizeof(indicate_data), indicate_data, true);
+                        // esp_ble_gatts_send_indicate(gatts_if, param->write.conn_id, gl_profile_tab[PROFILE_B_APP_ID].char_handle,
+                        //                         sizeof(indicate_data), indicate_data, true);
                     }
                 }
                 else if (descr_value == 0x0000){
@@ -654,11 +877,21 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         gl_profile_tab[PROFILE_B_APP_ID].char_uuid.uuid.uuid16 = GATTS_CHAR_UUID_TEST_B;
 
         esp_ble_gatts_start_service(gl_profile_tab[PROFILE_B_APP_ID].service_handle);
-        b_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_INDICATE;
+        b_property = ESP_GATT_CHAR_PROP_BIT_READ | ESP_GATT_CHAR_PROP_BIT_WRITE | ESP_GATT_CHAR_PROP_BIT_NOTIFY | ESP_GATT_CHAR_PROP_BIT_INDICATE;  
+        char* data = malloc(12);
+        header(data,5,10,0);
+        static uint8_t attr_value[12];
+        memcpy((void*) attr_value, data, 12);
+        static esp_attr_value_t gatts_demo_char0_val =
+        {
+            .attr_max_len = GATTS_DEMO_CHAR_VAL_LEN_MAX,
+            .attr_len     = 12,
+            .attr_value   = attr_value,
+        };
         esp_err_t add_char_ret =esp_ble_gatts_add_char( gl_profile_tab[PROFILE_B_APP_ID].service_handle, &gl_profile_tab[PROFILE_B_APP_ID].char_uuid,
                                                         ESP_GATT_PERM_READ | ESP_GATT_PERM_WRITE,
                                                         b_property,
-                                                        &gatts_demo_char2_val, NULL);
+                                                        &gatts_demo_char0_val, NULL);
         if (add_char_ret){
             ESP_LOGE(GATTS_TAG, "add char failed, error code =%x",add_char_ret);
         }

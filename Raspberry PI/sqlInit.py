@@ -45,6 +45,7 @@ create_logs = '''CREATE TABLE Logs (
 # Tabla con las configuraciones de conexion de cada dispositivo
 # Por mensaje!
 create_config = '''CREATE TABLE Config (
+    ID_DEVICE INTEGER NOT NULL,
     ID_protocol INTEGER,
     TransportLayer INTEGER NOT NULL
 );'''
@@ -59,7 +60,7 @@ create_loss = '''CREATE TABLE Loss (
 
 # insertamos la configuracion default
 # Protocolo 0, configuracion status 10.
-insert_config = '''insert into Config (ID_protocol, TransportLayer) values (0, 10)'''
+insert_config = '''insert into Config (ID_DEVICE, ID_protocol, TransportLayer) values (12612, 0, 30)'''
     
 import sqlite3 as sql
 
@@ -71,7 +72,7 @@ cur.execute(create_logs)
 cur.execute(create_config)
 cur.execute(create_loss)
 cur.execute(insert_config)
-cur.commit()
+conn.commit()
 conn.close()
 
 # inicializa la BDD
