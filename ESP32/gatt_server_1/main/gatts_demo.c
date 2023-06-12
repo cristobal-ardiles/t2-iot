@@ -510,6 +510,20 @@ void get_data(uint8_t protocol, short payload_size, uint8_t status, char *dest){
     return;
 }
 
+void load_sensors_to_char(uint8_t status, uint8_t protocol){
+
+        // get_config(&status, &protocol); 
+        ESP_LOGI(GATTS_TAG, "Status: %d, Protocol: %d", status, protocol);
+        short payload_size = get_payload_size(protocol);
+        char* data = malloc(payload_size);
+        get_data(protocol, payload_size, status, data); 
+        save_value(gl_profile_tab[PROFILE_B_APP_ID].char_handle, 
+            payload_size,
+            (const uint8_t*) data);
+        free(data);
+    return;
+}
+
 
 
 static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_if_t gatts_if, esp_ble_gatts_cb_param_t *param) {
@@ -624,26 +638,9 @@ static void gatts_profile_a_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         } else {
             example_write_event_env(gatts_if, &a_prepare_write_env, param);
         } 
-    
-        // Cargar datos a la característica
-        uint8_t status;
-        uint8_t protocol;
-
-        status = param->write.value[0];
-        protocol = param->write.value[1];
-
-        // get_config(&status, &protocol); 
-
-        ESP_LOGI(GATTS_TAG, "Status: %d, Protocol: %d", status, protocol);
-        
-        short payload_size = get_payload_size(protocol);
-
-        char* data = malloc(payload_size);
-        get_data(protocol, payload_size, status, data); 
-        save_value(gl_profile_tab[PROFILE_B_APP_ID].char_handle, 
-            payload_size,
-            (const uint8_t*) data);
-        free(data);
+        uint8_t status = param->write.value[0];
+        uint8_t protocol = param->write.value[1];
+        load_sensors_to_char(status, protocol);
         if (status == 30){
             esp_ble_gatts_send_indicate(
                 gl_profile_tab[PROFILE_B_APP_ID].gatts_if, param->write.conn_id, 

@@ -1,12 +1,18 @@
+import sys 
+sys.path += ["/home/cristobal/.local/lib/python3.10/site-packages"]
+
 import pygatt
 import DatabaseWork as db
 import Desempaquetamiento as des
+import keyboard
+from datetime import datetime
+
 
 # Definir los UUIDs de los servicios y características del dispositivo BLE
 DEVICE_ADDRESS = '4C:EB:D6:61:FE:D6'
 SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb' # ID del servicio
-CHARACTERISTIC_UUID_CONFIG = '0000fff1-0000-1000-8000-00805f9b34fb' # ID de la caracteristica del servicio
-CHARACTERISTIC_UUID_DATA = '0000fff1-0000-1000-8000-00805f9b34fb'
+CHARACTERISTIC_UUID_CONFIG = '0000ff01-0000-1000-8000-00805f9b34fb' # ID de la caracteristica del servicio
+CHARACTERISTIC_UUID_DATA = '0000ee01-0000-1000-8000-00805f9b34fb'
 
 # Inicializar la conexión PyGatt
 adapter = pygatt.GATTToolBackend()
@@ -15,6 +21,7 @@ adapter = pygatt.GATTToolBackend()
 attempts = 0
 device = None # Dispositivo BLE
 status = 10 # Estado de la comunicacion
+subscribed = False
 
 # Subscribe, cada vez que el esp32 cambie la caracteristica notificara a la raspberry
 # Envia un send indicate
@@ -30,6 +37,7 @@ def connect():
     """Conectar al dispositivo BLE. Intenta hasta que logra conectarse.
     Una vez conectado, envia la configuracion de la comunicacion y se suscribe a la caracteristica de notificacion"""
     adapter.start()
+    ts = datetime.now()
     while True:
         try:
             global attempts
@@ -37,7 +45,16 @@ def connect():
             print("Intento: ", attempts)
             # Intentamos conectar con el dispositivo
             global device
-            device = adapter.connect(DEVICE_ADDRESS, timeout=1, auto_reconnect=False) # auto_reconnect=True
+            device = adapter.connect(DEVICE_ADDRESS, timeout=10, auto_reconnect=False) # auto_reconnect=True
+            print("Conectado")
+            config = device.char_read(CHARACTERISTIC_UUID_DATA)
+            print(config)
+            header = des.getHeader(config)
+            data = {'Timestamp':ts}
+            # Guardamos en la BD la cantidad de intentos y el tiempo de conexion
+            db.lossSave(header, data, attempts)
+            print("Loss guardada")
+            break
         except pygatt.exceptions.BLEError:
             print("Error al conectar con el dispositivo")
             # Volvemos a intentar
@@ -45,8 +62,7 @@ def connect():
         ## Una vez conectado, nos subscribimos a la caracteristica de notificacion
         #device.subscribe(CHARACTERISTIC_UUID_DATA, callback=handle_notification) # Observamos la caracteristica
         
-        # Guardamos en la BD la cantidad de intentos y el tiempo de conexion
-        db.lossSave(attempts, device.mac_address)
+        ## MAC(0,5), TIMESTAMP(6,9), STATUS(10) 
 
 def handle_notification(handle, value):
     """Funcion para manejar notificaciones de caracteristicas. Al recibir una notificacion, se lee la caracteristica asociada a la notificacion, 
@@ -56,35 +72,72 @@ def handle_notification(handle, value):
     # Una vez llegada la notificacion, debemos leer la caracteristica
     #data = device.char_read_handle(handle)
     # Leemos la caracteristica asociada a la notificacion
-    try:
+    try: 
         data = device.char_read(CHARACTERISTIC_UUID_DATA)
-        # Parseamos la data
         response_dict = des.parseData(data) # Parsea la data, la devuelve en un diccionario. Guarda la informacion en la base de datos
         print("Data parseada: ", response_dict)
     except pygatt.exceptions.NotificationTimeout:
-        print("TIMEOUT: Error al leer la caracteristica")
-    return
+        try:
+            data = device.char_read_handle(handle)
+            response_dict = des.parseData(data) # Parsea la data, la devuelve en un diccionario. Guarda la informacion en la base de datos
+            print("Data parseada: ", response_dict)
+        except pygatt.exceptions.NotificationTimeout:
+            print("No leyó")
+    # Parseamos la data
 
 def disconnect():
     """Desconectar del dispositivo BLE"""
+    global status
+    global subscribed
+    global attempts
     # Damos aviso de que nos desconectamos
     print("Desconectando del dispositivo")
-    device.char_write(CHARACTERISTIC_UUID_CONFIG, bytearray([0, 0])) # Configuracion de la comunicacion
+    status = 10
+    subscribed = False
+    attempts = 0
+    write_config() # Configuracion de la comunicacion
     adapter.stop()
 
-def subscribeDevice(status):
-    if status == 30: # UDP
-        device.subscribe(CHARACTERISTIC_UUID_DATA, callback=handle_notification, indication=False) # Observamos la caracteristica
-    elif status == 31: # TCP
-        device.subscribe(CHARACTERISTIC_UUID_DATA, callback=handle_notification, indication=True) # Observamos la caracteristica    
 
+def subscribe_device(status):
+    try:
+        device.subscribe(CHARACTERISTIC_UUID_DATA, 
+                            callback=handle_notification, 
+                            indication = True if status == 31 else False,
+                            wait_for_response = True)
+    except:
+        print("Response not received")
 # Main loop
 
-while True:
-    connect()
-    # Una vez conectado, enviamos la configuracion de la comunicacion
-    status, protocol = db.getConfig()
+def write_config():
     payload = bytearray([status, protocol])
-    device.char_write(CHARACTERISTIC_UUID_CONFIG, payload) # Configuracion de la comunicacion
-    # Nos subscribimos a la caracteristica de notificacion
-    device.subscribe(CHARACTERISTIC_UUID_DATA, callback=handle_notification) # Observamos la caracteristica
+    print(f"Writing config: status={status}, protocol={protocol}")
+    device.char_write(CHARACTERISTIC_UUID_CONFIG, payload)
+    
+while True:
+
+    if status == 10:
+        connect()
+        # Una vez conectado, enviamos la configuracion de la comunicacion
+        protocol, status = db.getConfig()
+    
+    if not subscribed:
+        subscribe_device(status)
+
+    write_config()# Configuracion de la comunicacion
+    
+    # Esperar la data
+    while True: 
+        if keyboard.is_pressed('esc'):
+            disconnect()
+            break
+        elif keyboard.is_pressed('s'):
+            status = 30 if status == 31 else 31
+            db.save_config(status, protocol)
+            disconnect()
+            break
+        elif keyboard.is_pressed('p'):
+            protocol = (protocol + 1) % 4
+            db.save_config(status, protocol)
+            disconnect()
+            break
