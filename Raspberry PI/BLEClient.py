@@ -13,12 +13,12 @@ import time
 # Definir los UUIDs de los servicios y características del dispositivo BLE
 DEVICE_ADDRESS = '4C:EB:D6:61:FE:D6'
 SERVICE_UUID = '0000fff0-0000-1000-8000-00805f9b34fb' # ID del servicio
-CHARACTERISTIC_UUID_CONFIG = '0000ff01-0000-1000-8000-00805f9b34fb' # ID de la caracteristica del servicio
-CHARACTERISTIC_UUID_DATA = '0000ee01-0000-1000-8000-00805f9b34fb'
+CHARACTERISTIC_UUID_CONFIG = "0000ff01-0000-1000-8000-00805f9b34fb" # ID de la caracteristica del servicio
+CHARACTERISTIC_UUID_DATA = "0000ee01-0000-1000-8000-00805f9b34fb"
 CHARACTERISTIC_HANDLE_CONFIG = 0x2a
 CHARACTERISTIC_HANDLE_DATA = 0X2e
 # Inicializar la conexión PyGatt
-# adapter = pygatt.GATTToolBackend()
+adapter = pygatt.GATTToolBackend()
 
 # Global variables
 attempts = 0
@@ -26,14 +26,12 @@ device = None # Dispositivo BLE
 status = 10 # Estado de la comunicacion
 subscribed = False
 
-
 class Requester(GATTRequester):
     def on_notification(self, handle, data):
         handle_notification(handle, data)
     def on_indication(self, handle, data):
         handle_notification(handle, data)
 
-req = None
 
 # Subscribe, cada vez que el esp32 cambie la caracteristica notificara a la raspberry
 # Envia un send indicate
@@ -43,9 +41,21 @@ req = None
 # Leemos la caracteristica asociada a la notificacion para obtener los valores nuevos.
 # Detener el envio de datos, leer el valor de la config y si yo no la he cambiado es porque todavia no he recibido los datos.
 
-ASYNC = False
-req = Requester(DEVICE_ADDRESS)
 def read_data():
+    
+    print("sleep to wait")
+    time.sleep(1)
+    print("Trying to read data")
+    ret = None
+    while True:
+        try:
+            ret = device.char_read(CHARACTERISTIC_UUID_DATA)
+            break
+        except Exception as ex:
+            print(ex.__class__.__name__)
+            print("Failed")
+    return ret
+
     global ASYNC
     if ASYNC:
         response = GATTResponse()
@@ -75,7 +85,7 @@ def read_data():
 def connect():
     """Conectar al dispositivo BLE. Intenta hasta que logra conectarse.
     Una vez conectado, envia la configuracion de la comunicacion y se suscribe a la caracteristica de notificacion"""
-    # adapter.start()
+    adapter.start()
     ts = datetime.now()
     while True:
         try:
@@ -83,8 +93,8 @@ def connect():
             attempts += 1
             print("Intento: ", attempts)
             # Intentamos conectar con el dispositivo
-            global req
-            # device = adapter.connect(DEVICE_ADDRESS, timeout=1, auto_reconnect=False) # auto_reconnect=True
+            global device
+            device = adapter.connect(DEVICE_ADDRESS, timeout=1, auto_reconnect=False) # auto_reconnect=True
             print("Conectado")
             config = read_data()
             print(config)
@@ -151,7 +161,7 @@ def subscribe_device(status):
 def write_config():
     payload = bytes([status, protocol])
     print(f"Writing config: status={status}, protocol={protocol}")
-    req.write_by_handle(CHARACTERISTIC_HANDLE_CONFIG, payload)
+    device.char_write(CHARACTERISTIC_UUID_CONFIG, payload, wait_for_response=False)
 while True:
 
     if status == 10:
@@ -159,8 +169,11 @@ while True:
         # Una vez conectado, enviamos la configuracion de la comunicacion
         protocol, status = db.getConfig()
 
+    if not subscribed:
+        subscribe_device(status)
     write_config()# Configuracion de la comunicacion
-    
+
+
     # Esperar la data
     while True: 
         if keyboard.is_pressed('esc'):
