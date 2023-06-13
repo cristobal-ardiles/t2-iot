@@ -45,10 +45,10 @@ def read_data():
     
     print("sleep to wait")
     time.sleep(1)
-    print("Trying to read data")
     ret = None
     while True:
         try:
+            print("Trying to read data")
             ret = device.char_read(CHARACTERISTIC_UUID_DATA)
             break
         except Exception as ex:
@@ -94,7 +94,7 @@ def connect():
             print("Intento: ", attempts)
             # Intentamos conectar con el dispositivo
             global device
-            device = adapter.connect(DEVICE_ADDRESS, timeout=1, auto_reconnect=False) # auto_reconnect=True
+            device = adapter.connect(DEVICE_ADDRESS, timeout=1, auto_reconnect=False)#address_type=pygatt.BLEAddressType.random), # auto_reconnect=True
             print("Conectado")
             config = read_data()
             print(config)
