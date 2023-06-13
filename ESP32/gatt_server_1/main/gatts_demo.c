@@ -800,10 +800,12 @@ static void gatts_profile_b_event_handler(esp_gatts_cb_event_t event, esp_gatt_i
         esp_log_buffer_hex(GATTS_TAG, rsp.attr_value.value, rsp.attr_value.len);
         esp_err_t err = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
+                            
         while(err != ESP_OK){
             err = esp_ble_gatts_send_response(gatts_if, param->read.conn_id, param->read.trans_id,
                                     ESP_GATT_OK, &rsp);
         }
+        ESP_LOGI(GATTS_TAG, "Data Sent");
         break;
     }
     case ESP_GATTS_WRITE_EVT: {
