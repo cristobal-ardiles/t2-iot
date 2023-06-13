@@ -1,0 +1,11 @@
+.vscode/*
+sdkconfig*
+ESP32/gatt_server_1/build/*
+Raspberry PI/DB.sqlite
+Raspberry PI/__pycache__
+Raspberry PI/pygatt/__pycache__/*
+Raspberry PI/pygatt/backends/__pycache__/*
+Raspberry PI/pygatt/backends/bgapi/__pycache__/*
+Raspberry PI/pygatt/backends/gatttool/__pycache__/*
+Raspberry PI/serial/__pycache__/*
+Raspberry PI/serial/tools/__pycache__/*
